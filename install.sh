@@ -3960,6 +3960,10 @@ EOF
             "tlsSettings": {
               "rejectUnknownSni": true,
               "minVersion": "1.2",
+	      "alpn": [
+                "http/1.1",
+		"h2"
+              ],
               "certificates": [
                 {
                   "certificateFile": "/etc/v2ray-agent/tls/${domain}.crt",
