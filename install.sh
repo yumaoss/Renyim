@@ -183,6 +183,7 @@ initVar() {
     singBoxTuicPort=
     singBoxNaivePort=
     singBoxVMessWSPort=
+    singBoxVLESSWSPort=
 
     # nginx订阅端口
     subscribePort=
@@ -396,8 +397,6 @@ readInstallProtocolType() {
 
     xrayVLESSRealityPort=
     xrayVLESSRealityServerName=
-    #    xrayVLESSRealityPrivateKey=
-    #    xrayVLESSRealityPublicKey=
 
     currentRealityPrivateKey=
     currentRealityPublicKey=
@@ -426,6 +425,10 @@ readInstallProtocolType() {
         fi
         if echo "${row}" | grep -q VLESS_WS_inbounds; then
             currentInstallProtocolType="${currentInstallProtocolType}1,"
+            if [[ "${coreInstallType}" == "2" ]]; then
+                frontingType=03_VLESS_WS_inbounds
+                singBoxVLESSWSPort=$(jq .inbounds[0].listen_port "${row}.json")
+            fi
         fi
         if echo "${row}" | grep -q trojan_gRPC_inbounds; then
             currentInstallProtocolType="${currentInstallProtocolType}2,"
@@ -717,6 +720,7 @@ readConfigHostPathUUID() {
     currentPort=
     currentCDNAddress=
     singBoxVMessWSPath=
+    singBoxVLESSWSPath=
 
     if [[ "${coreInstallType}" == "1" ]]; then
 
@@ -789,6 +793,10 @@ readConfigHostPathUUID() {
         elif [[ "${coreInstallType}" == "2" && -f "${singBoxConfigPath}05_VMess_WS_inbounds.json" ]]; then
             singBoxVMessWSPath=$(jq -r .inbounds[0].transport.path "${singBoxConfigPath}05_VMess_WS_inbounds.json")
             currentPath=$(jq -r .inbounds[0].transport.path "${singBoxConfigPath}05_VMess_WS_inbounds.json" | awk -F "[/]" '{print $2}')
+        elif [[ "${coreInstallType}" == "2" && -f "${singBoxConfigPath}03_VLESS_WS_inbounds.json" ]]; then
+            singBoxVLESSWSPath=$(jq -r .inbounds[0].transport.path "${singBoxConfigPath}03_VLESS_WS_inbounds.json")
+            currentPath=$(jq -r .inbounds[0].transport.path "${singBoxConfigPath}03_VLESS_WS_inbounds.json" | awk -F "[/]" '{print $2}')
+            currentPath=${currentPath::-2}
         fi
     fi
     if [[ -f "/etc/v2ray-agent/cdn" ]] && grep -q "address" "/etc/v2ray-agent/cdn"; then
@@ -2715,6 +2723,11 @@ initSingBoxClients() {
             currentUser="{\"uuid\":\"${uuid}\",\"flow\":\"xtls-rprx-vision\",\"name\":\"${name}-VLESS_TCP/TLS_Vision\"}"
             users=$(echo "${users}" | jq -r ". +=[${currentUser}]")
         fi
+        # VLESS WS
+        if echo "${type}" | grep -q ",1,"; then
+            currentUser="{\"uuid\":\"${uuid}\",\"name\":\"${name}-VLESS_WS\"}"
+            users=$(echo "${users}" | jq -r ". +=[${currentUser}]")
+        fi
         # VMess ws
         if echo "${type}" | grep -q ",3,"; then
             currentUser="{\"uuid\":\"${uuid}\",\"name\":\"${name}-VMess_WS\",\"alterId\": 0}"
@@ -2869,10 +2882,10 @@ hysteriaPortHopping() {
     echoContent skyBlue "\n进度 1/1 : 端口跳跃"
     echoContent red "\n=============================================================="
     echoContent yellow "# 注意事项\n"
-    echoContent yellow "仅支持UDP"
+    echoContent yellow "仅支持Hysteria2"
     echoContent yellow "端口跳跃的起始位置为30000"
-    echoContent yellow "端口跳跃的结束位置为60000"
-    echoContent yellow "可以在30000-60000范围中选一段"
+    echoContent yellow "端口跳跃的结束位置为40000"
+    echoContent yellow "可以在30000-40000范围中选一段"
     echoContent yellow "建议1000个左右"
 
     echoContent yellow "请输入端口跳跃的范围，例如[30000-31000]"
@@ -2891,58 +2904,49 @@ hysteriaPortHopping() {
         if [[ -z "${portStart}" || -z "${portEnd}" ]]; then
             echoContent red " ---> 范围不合法"
             hysteriaPortHopping
-        elif ((portStart < 30000 || portStart > 60000 || portEnd < 30000 || portEnd > 60000 || portEnd < portStart)); then
+        elif ((portStart < 30000 || portStart > 40000 || portEnd < 30000 || portEnd > 40000 || portEnd < portStart)); then
             echoContent red " ---> 范围不合法"
             hysteriaPortHopping
         else
             echoContent green "\n端口范围: ${hysteriaPortHoppingRange}\n"
-            #            ip -4 addr show | awk '/inet /{print $NF ":" $2}' | awk '{print ""NR""":"$0}'
-            #            read -r -p "请选择对应网卡:" selectInterface
-            #            if ! ip -4 addr show | awk '/inet /{print $NF ":" $2}' | awk '{print ""NR""":"$0}' | grep -q "${selectInterface}:"; then
-            #                echoContent red " ---> 选择错误"
-            #                hysteriaPortHopping
-            #            else
-            iptables -t nat -A PREROUTING -p udp --dport "${portStart}:${portEnd}" -m comment --comment "mack-a_portHopping" -j DNAT --to-destination :${hysteriaPort}
+            iptables -t nat -A PREROUTING -p udp --dport "${portStart}:${portEnd}" -m comment --comment "mack-a_hysteria2_portHopping" -j DNAT --to-destination :${hysteriaPort}
 
-            if iptables-save | grep -q "mack-a_portHopping"; then
+            if iptables-save | grep -q "mack-a_hysteria2_portHopping"; then
                 allowPort "${portStart}:${portEnd}" udp
                 echoContent green " ---> 端口跳跃添加成功"
             else
                 echoContent red " ---> 端口跳跃添加失败"
             fi
-            #            fi
         fi
-
     fi
 }
 
 # 读取端口跳跃的配置
 readHysteriaPortHopping() {
     if [[ -n "${hysteriaPort}" ]]; then
-        #        interfaceName=$(ip -4 addr show | awk '/inet /{print $NF ":" $2}' | awk '{print ""NR""":"$0}' | grep "${selectInterface}:" | awk -F "[:]" '{print $2}')
-        if iptables-save | grep -q "mack-a_portHopping"; then
+        if iptables-save | grep -q "mack-a_hysteria2_portHopping"; then
             portHopping=
-            portHopping=$(iptables-save | grep "mack-a_portHopping" | cut -d " " -f 8)
+            portHopping=$(iptables-save | grep "mack-a_hysteria2_portHopping" | cut -d " " -f 8)
             portHoppingStart=$(echo "${portHopping}" | cut -d ":" -f 1)
             portHoppingEnd=$(echo "${portHopping}" | cut -d ":" -f 2)
         fi
     fi
 }
 
-# 删除hysteria 端口条约iptables规则
+# 删除hysteria2 端口跳跃iptables规则
 deleteHysteriaPortHoppingRules() {
-    iptables -t nat -L PREROUTING --line-numbers | grep "mack-a_portHopping" | awk '{print $1}' | while read -r line; do
+    iptables -t nat -L PREROUTING --line-numbers | grep "mack-a_hysteria2_portHopping" | awk '{print $1}' | while read -r line; do
         iptables -t nat -D PREROUTING 1
     done
 }
 
+# hysteria2端口跳跃菜单
 hysteriaPortHoppingMenu() {
     # 判断iptables是否存在
     if ! find /usr/bin /usr/sbin | grep -q -w iptables; then
         echoContent red " ---> 无法识别iptables工具，无法使用端口跳跃，退出安装"
         exit 0
     fi
-    readHysteriaConfig
     readHysteriaPortHopping
     echoContent skyBlue "\n进度 1/1 : 端口跳跃"
     echoContent red "\n=============================================================="
@@ -2958,7 +2962,11 @@ hysteriaPortHoppingMenu() {
             echoContent green " ---> 删除成功"
         fi
     elif [[ "${selectPortHoppingStatus}" == "3" ]]; then
-        echoContent green " ---> 当前端口跳跃范围为: ${portHoppingStart}-${portHoppingEnd}"
+        if [[ -n "${portHoppingStart}" && -n "${portHoppingEnd}" ]]; then
+            echoContent green " ---> 当前端口跳跃范围为: ${portHoppingStart}-${portHoppingEnd}"
+        else
+            echoContent yellow " ---> 未设置端口跳跃"
+        fi
     else
         hysteriaPortHoppingMenu
     fi
@@ -4170,6 +4178,47 @@ EOF
         rm /etc/v2ray-agent/sing-box/conf/config/02_VLESS_TCP_inbounds.json >/dev/null 2>&1
     fi
 
+    if echo "${selectCustomInstallType}" | grep -q ",1," || [[ "$1" == "all" ]]; then
+        echoContent yellow "\n===================== 配置VLESS+WS =====================\n"
+        echoContent skyBlue "\n开始配置VLESS+WS协议端口"
+        echo
+        mapfile -t result < <(initSingBoxPort "${singBoxVLESSWSPort}")
+        echoContent green "\n ---> VLESS_WS端口：${result[-1]}"
+
+        checkDNSIP "${domain}"
+        removeNginxDefaultConf
+        handleSingBox stop
+        randomPathFunction
+        checkPortOpen "${result[-1]}" "${domain}"
+        cat <<EOF >/etc/v2ray-agent/sing-box/conf/config/03_VLESS_WS_inbounds.json
+{
+    "inbounds":[
+        {
+          "type": "vless",
+          "listen":"::",
+          "listen_port":${result[-1]},
+          "tag":"VLESSWS",
+          "users":$(initSingBoxClients 1),
+          "tls":{
+            "server_name": "${sslDomain}",
+            "enabled": true,
+            "certificate_path": "/etc/v2ray-agent/tls/${sslDomain}.crt",
+            "key_path": "/etc/v2ray-agent/tls/${sslDomain}.key"
+          },
+          "transport": {
+            "type": "ws",
+            "path": "/${currentPath}ws",
+            "max_early_data": 2048,
+            "early_data_header_name": "Sec-WebSocket-Protocol"
+          }
+        }
+    ]
+}
+EOF
+    elif [[ -z "$3" ]]; then
+        rm /etc/v2ray-agent/sing-box/conf/config/03_VLESS_WS_inbounds.json >/dev/null 2>&1
+    fi
+
     if echo "${selectCustomInstallType}" | grep -q ",3," || [[ "$1" == "all" ]]; then
         echoContent yellow "\n===================== 配置VMess+ws =====================\n"
         echoContent skyBlue "\n开始配置VMess+ws协议端口"
@@ -4433,6 +4482,7 @@ EOF
     removeSingBoxConfig cn_block_route
     removeSingBoxConfig 01_direct_outbound
     removeSingBoxConfig block_domain_outbound
+    removeSingBoxConfig dns
 }
 # 初始化 sing-box订阅配置
 initSubscribeLocalConfig() {
@@ -4520,13 +4570,13 @@ EOF
     elif [[ "${type}" == "vlessws" ]]; then
 
         echoContent yellow " ---> 通用格式(VLESS+WS+TLS)"
-        echoContent green "    vless://${id}@${add}:${port}?encryption=none&security=tls&type=ws&host=${currentHost}&sni=${currentHost}&fp=chrome&path=/${currentPath}ws#${email}\n"
+        echoContent green "    vless://${id}@${add}:${port}?encryption=none&security=tls&type=ws&host=${currentHost}&sni=${currentHost}&fp=chrome&path=${path}#${email}\n"
 
         echoContent yellow " ---> 格式化明文(VLESS+WS+TLS)"
-        echoContent green "    协议类型:VLESS，地址:${add}，伪装域名/SNI:${currentHost}，端口:${port}，client-fingerprint: chrome,用户ID:${id}，安全:tls，传输方式:ws，路径:/${currentPath}ws，账户名:${email}\n"
+        echoContent green "    协议类型:VLESS，地址:${add}，伪装域名/SNI:${currentHost}，端口:${port}，client-fingerprint: chrome,用户ID:${id}，安全:tls，传输方式:ws，路径:${path}，账户名:${email}\n"
 
         cat <<EOF >>"/etc/v2ray-agent/subscribe_local/default/${user}"
-vless://${id}@${add}:${port}?encryption=none&security=tls&type=ws&host=${currentHost}&sni=${currentHost}&fp=chrome&path=/${currentPath}ws#${email}
+vless://${id}@${add}:${port}?encryption=none&security=tls&type=ws&host=${currentHost}&sni=${currentHost}&fp=chrome&path=${path}#${email}
 EOF
         cat <<EOF >>"/etc/v2ray-agent/subscribe_local/clashMeta/${user}"
   - name: "${email}"
@@ -4540,16 +4590,16 @@ EOF
     client-fingerprint: chrome
     servername: ${currentHost}
     ws-opts:
-      path: /${currentPath}ws
+      path: ${path}
       headers:
         Host: ${currentHost}
 EOF
 
-        singBoxSubscribeLocalConfig=$(jq -r ". += [{\"tag\":\"${email}\",\"type\":\"vless\",\"server\":\"${add}\",\"server_port\":${port},\"uuid\":\"${id}\",\"flow\":\"\",\"tls\":{\"enabled\":true,\"server_name\":\"${currentHost}\",\"utls\":{\"enabled\":true,\"fingerprint\":\"chrome\"}},\"multiplex\":{\"enabled\":false,\"protocol\":\"smux\",\"max_streams\":32},\"packet_encoding\":\"xudp\",\"transport\":{\"type\":\"ws\",\"path\":\"/${currentPath}ws\",\"headers\":{\"Host\":\"${port}\"}}}]" "/etc/v2ray-agent/subscribe_local/sing-box/${user}")
+        singBoxSubscribeLocalConfig=$(jq -r ". += [{\"tag\":\"${email}\",\"type\":\"vless\",\"server\":\"${add}\",\"server_port\":${port},\"uuid\":\"${id}\",\"tls\":{\"enabled\":true,\"server_name\":\"${currentHost}\",\"utls\":{\"enabled\":true,\"fingerprint\":\"chrome\"}},\"multiplex\":{\"enabled\":false,\"protocol\":\"smux\",\"max_streams\":32},\"packet_encoding\":\"xudp\",\"transport\":{\"type\":\"ws\",\"path\":\"${path}\",\"headers\":{\"Host\":\"${currentHost}\"}}}]" "/etc/v2ray-agent/subscribe_local/sing-box/${user}")
         echo "${singBoxSubscribeLocalConfig}" | jq . >"/etc/v2ray-agent/subscribe_local/sing-box/${user}"
 
         echoContent yellow " ---> 二维码 VLESS(VLESS+WS+TLS)"
-        echoContent green "    https://api.qrserver.com/v1/create-qr-code/?size=400x400&data=vless%3A%2F%2F${id}%40${add}%3A${port}%3Fencryption%3Dnone%26security%3Dtls%26type%3Dws%26host%3D${currentHost}%26fp%3Dchrome%26sni%3D${currentHost}%26path%3D%252f${currentPath}ws%23${email}"
+        echoContent green "    https://api.qrserver.com/v1/create-qr-code/?size=400x400&data=vless%3A%2F%2F${id}%40${add}%3A${port}%3Fencryption%3Dnone%26security%3Dtls%26type%3Dws%26host%3D${currentHost}%26fp%3Dchrome%26sni%3D${currentHost}%26path%3D${path}%23${email}"
 
     elif [[ "${type}" == "vlessgrpc" ]]; then
 
@@ -4637,10 +4687,18 @@ EOF
 
     elif [[ "${type}" == "hysteria" ]]; then
         echoContent yellow " ---> Hysteria(TLS)"
+        local clashMetaPortContent="port: ${port}"
+        local multiPort=
+        local multiPortEncode
+        if echo "${port}" | grep -q "-"; then
+            clashMetaPortContent="ports: ${port}"
+            multiPort="mport=${port}&"
+            multiPortEncode="mport%3D${port}%26"
+        fi
 
-        echoContent green "    hysteria2://${id}@${currentHost}:${port}?peer=${currentHost}&insecure=0&sni=${currentHost}&alpn=h3#${email}\n"
+        echoContent green "    hysteria2://${id}@${currentHost}:${singBoxHysteria2Port}?${multiPort}peer=${currentHost}&insecure=0&sni=${currentHost}&alpn=h3#${email}\n"
         cat <<EOF >>"/etc/v2ray-agent/subscribe_local/default/${user}"
-hysteria2://${id}@${currentHost}:${port}?peer=${currentHost}&insecure=0&sni=${currentHost}&alpn=h3#${email}
+hysteria2://${id}@${currentHost}:${singBoxHysteria2Port}?${multiPort}peer=${currentHost}&insecure=0&sni=${currentHost}&alpn=h3#${email}
 EOF
         echoContent yellow " ---> v2rayN(hysteria+TLS)"
         echo "{\"server\": \"${currentHost}:${port}\",\"socks5\": { \"listen\": \"127.0.0.1:7798\", \"timeout\": 300},\"auth\":\"${id}\",\"tls\":{\"sni\":\"${currentHost}\"}}" | jq
@@ -4649,7 +4707,7 @@ EOF
   - name: "${email}"
     type: hysteria2
     server: ${currentHost}
-    port: ${port}
+    ${clashMetaPortContent}
     password: ${id}
     alpn:
         - h3
@@ -4658,11 +4716,11 @@ EOF
     down: "${hysteria2ClientDownloadSpeed} Mbps"
 EOF
 
-        singBoxSubscribeLocalConfig=$(jq -r ". += [{\"tag\":\"${email}\",\"type\":\"hysteria2\",\"server\":\"${currentHost}\",\"server_port\":${port},\"up_mbps\":${hysteria2ClientUploadSpeed},\"down_mbps\":${hysteria2ClientDownloadSpeed},\"password\":\"${id}\",\"tls\":{\"enabled\":true,\"server_name\":\"${currentHost}\",\"alpn\":[\"h3\"]}}]" "/etc/v2ray-agent/subscribe_local/sing-box/${user}")
+        singBoxSubscribeLocalConfig=$(jq -r ". += [{\"tag\":\"${email}\",\"type\":\"hysteria2\",\"server\":\"${currentHost}\",\"server_port\":${singBoxHysteria2Port},\"up_mbps\":${hysteria2ClientUploadSpeed},\"down_mbps\":${hysteria2ClientDownloadSpeed},\"password\":\"${id}\",\"tls\":{\"enabled\":true,\"server_name\":\"${currentHost}\",\"alpn\":[\"h3\"]}}]" "/etc/v2ray-agent/subscribe_local/sing-box/${user}")
         echo "${singBoxSubscribeLocalConfig}" | jq . >"/etc/v2ray-agent/subscribe_local/sing-box/${user}"
 
         echoContent yellow " ---> 二维码 Hysteria2(TLS)"
-        echoContent green "    https://api.qrserver.com/v1/create-qr-code/?size=400x400&data=hysteria2%3A%2F%2F${id}%40${currentHost}%3A${port}%3Fpeer%3D${currentHost}%26insecure%3D0%26sni%3D${currentHost}%26alpn%3Dh3%23${email}\n"
+        echoContent green "    https://api.qrserver.com/v1/create-qr-code/?size=400x400&data=hysteria2%3A%2F%2F${id}%40${currentHost}%3A${singBoxHysteria2Port}%3F${multiPortEncode}peer%3D${currentHost}%26insecure%3D0%26sni%3D${currentHost}%26alpn%3Dh3%23${email}\n"
 
     elif [[ "${type}" == "vlessReality" ]]; then
         local realityServerName=${xrayVLESSRealityServerName}
@@ -4801,6 +4859,7 @@ showAccounts() {
     readInstallProtocolType
     readConfigHostPathUUID
     readSingBoxConfig
+    readHysteriaPortHopping
 
     echo
     echoContent skyBlue "\n进度 $1/${totalProgress} : 账号"
@@ -4824,17 +4883,28 @@ showAccounts() {
     if echo ${currentInstallProtocolType} | grep -q ",1,"; then
         echoContent skyBlue "\n================================ VLESS WS TLS [仅CDN推荐] ================================\n"
 
-        jq .inbounds[0].settings.clients ${configPath}03_VLESS_WS_inbounds.json | jq -c '.[]' | while read -r user; do
+        jq .inbounds[0].settings.clients//.inbounds[0].users ${configPath}03_VLESS_WS_inbounds.json | jq -c '.[]' | while read -r user; do
             local email=
-            email=$(echo "${user}" | jq -r .email)
+            email=$(echo "${user}" | jq -r .email//.name)
 
+            local vlessWSPort=${currentDefaultPort}
+            if [[ "${coreInstallType}" == "2" ]]; then
+                vlessWSPort="${singBoxVLESSWSPort}"
+            fi
             echo
             local path="${currentPath}ws"
+
+            if [[ ${coreInstallType} == "1" ]]; then
+                path="/${currentPath}ws"
+            elif [[ "${coreInstallType}" == "2" ]]; then
+                path="${singBoxVLESSWSPath}"
+            fi
+
             local count=
             while read -r line; do
                 echoContent skyBlue "\n ---> 账号:${email}${count}"
                 if [[ -n "${line}" ]]; then
-                    defaultBase64Code vlessws "${currentDefaultPort}" "${email}${count}" "$(echo "${user}" | jq -r .id)" "${line}"
+                    defaultBase64Code vlessws "${vlessWSPort}" "${email}${count}" "$(echo "${user}" | jq -r .id//.uuid)" "${line}" "${path}"
                     count=$((count + 1))
                     echo
                 fi
@@ -4930,10 +5000,17 @@ showAccounts() {
         if [[ "${coreInstallType}" == "1" ]]; then
             path="${singBoxConfigPath}"
         fi
+        local hysteria2DefaultPort=
+        if [[ -n "${portHoppingStart}" && -n "${portHoppingEnd}" ]]; then
+            hysteria2DefaultPort="${portHoppingStart}-${portHoppingEnd}"
+        else
+            hysteria2DefaultPort=${singBoxHysteria2Port}
+        fi
+
         jq -r -c '.inbounds[]|.users[]' "${path}06_hysteria2_inbounds.json" | while read -r user; do
             echoContent skyBlue "\n ---> 账号:$(echo "${user}" | jq -r .name)"
             echo
-            defaultBase64Code hysteria "${singBoxHysteria2Port}" "$(echo "${user}" | jq -r .name)" "$(echo "${user}" | jq -r .password)"
+            defaultBase64Code hysteria "${hysteria2DefaultPort}" "$(echo "${user}" | jq -r .name)" "$(echo "${user}" | jq -r .password)"
         done
 
     fi
@@ -5583,7 +5660,7 @@ removeUser() {
         if [[ "${coreInstallType}" == "1" ]]; then
             jq -r -c .inbounds[0].settings.clients[].email ${configPath}${userConfigType}.json | awk '{print NR""":"$0}'
         elif [[ "${coreInstallType}" == "2" ]]; then
-            jq -r -c .inbounds[0].users[].name ${configPath}${userConfigType}.json | awk '{print NR""":"$0}'
+            jq -r -c .inbounds[0].users[].name//.inbounds[0].users[].username ${configPath}${userConfigType}.json | awk '{print NR""":"$0}'
         fi
 
         read -r -p "请选择要删除的用户编号[仅支持单个删除]:" delUserIndex
@@ -5615,19 +5692,19 @@ removeUser() {
 
         if echo ${currentInstallProtocolType} | grep -q ",3,"; then
             local vmessWSResult
-            vmessWSResult=$(jq -r 'del(.inbounds[0].settings.clients['${delUserIndex}'])' ${configPath}05_VMess_WS_inbounds.json)
+            vmessWSResult=$(jq -r 'del(.inbounds[0].settings.clients['${delUserIndex}']//.inbounds[0].users['${delUserIndex}'])' ${configPath}05_VMess_WS_inbounds.json)
             echo "${vmessWSResult}" | jq . >${configPath}05_VMess_WS_inbounds.json
         fi
 
         if echo ${currentInstallProtocolType} | grep -q ",5,"; then
             local vlessGRPCResult
-            vlessGRPCResult=$(jq -r 'del(.inbounds[0].settings.clients['${delUserIndex}'])' ${configPath}06_VLESS_gRPC_inbounds.json)
+            vlessGRPCResult=$(jq -r 'del(.inbounds[0].settings.clients['${delUserIndex}']//.inbounds[0].users['${delUserIndex}'])' ${configPath}06_VLESS_gRPC_inbounds.json)
             echo "${vlessGRPCResult}" | jq . >${configPath}06_VLESS_gRPC_inbounds.json
         fi
 
         if echo ${currentInstallProtocolType} | grep -q ",4,"; then
             local trojanTCPResult
-            trojanTCPResult=$(jq -r 'del(.inbounds[0].settings.clients['${delUserIndex}'])' ${configPath}04_trojan_TCP_inbounds.json)
+            trojanTCPResult=$(jq -r 'del(.inbounds[0].settings.clients['${delUserIndex}']//.inbounds[0].users['${delUserIndex}'])' ${configPath}04_trojan_TCP_inbounds.json)
             echo "${trojanTCPResult}" | jq . >${configPath}04_trojan_TCP_inbounds.json
         fi
 
@@ -5644,13 +5721,18 @@ removeUser() {
 
         if echo ${currentInstallProtocolType} | grep -q ",6,"; then
             local hysteriaResult
-            hysteriaResult=$(jq -r 'del(.inbounds[0].users['${delUserIndex}'])' "${singBoxConfigPath}06_hysteria2_inbounds.json")
+            hysteriaResult=$(jq -r 'del(.inbounds[0].users['${delUserIndex}']//.inbounds[0].users['${delUserIndex}'])' "${singBoxConfigPath}06_hysteria2_inbounds.json")
             echo "${hysteriaResult}" | jq . >"${singBoxConfigPath}06_hysteria2_inbounds.json"
         fi
         if echo ${currentInstallProtocolType} | grep -q ",9,"; then
             local tuicResult
-            tuicResult=$(jq -r 'del(.inbounds[0].users['${delUserIndex}'])' "${singBoxConfigPath}09_tuic_inbounds.json")
+            tuicResult=$(jq -r 'del(.inbounds[0].users['${delUserIndex}']//.inbounds[0].users['${delUserIndex}'])' "${singBoxConfigPath}09_tuic_inbounds.json")
             echo "${tuicResult}" | jq . >"${singBoxConfigPath}09_tuic_inbounds.json"
+        fi
+        if echo ${currentInstallProtocolType} | grep -q ",10,"; then
+            local naiveResult
+            naiveResult=$(jq -r 'del(.inbounds[0].users['${delUserIndex}']//.inbounds[0].users['${delUserIndex}'])' "${singBoxConfigPath}10_naive_inbounds.json")
+            echo "${naiveResult}" | jq . >"${singBoxConfigPath}10_naive_inbounds.json"
         fi
         reloadCore
     fi
@@ -7258,7 +7340,8 @@ setUnlockDNS() {
 
 # 移除 DNS分流
 removeUnlockDNS() {
-    cat <<EOF >${configPath}11_dns.json
+    if [[ "${coreInstallType}" == "1" && -f "${configPath}11_dns.json" ]]; then
+        cat <<EOF >${configPath}11_dns.json
 {
 	"dns": {
 		"servers": [
@@ -7267,6 +7350,22 @@ removeUnlockDNS() {
 	}
 }
 EOF
+    fi
+
+    if [[ "${coreInstallType}" == "2" && -f "${singBoxConfigPath}dns.json" ]]; then
+        cat <<EOF >${singBoxConfigPath}dns.json
+{
+    "dns": {
+        "servers":[
+            {
+                "address":"local"
+            }
+        ]
+    }
+}
+EOF
+    fi
+
     reloadCore
 
     echoContent green " ---> 卸载成功"
@@ -7296,6 +7395,7 @@ EOF
 customSingBoxInstall() {
     echoContent skyBlue "\n========================个性化安装============================"
     echoContent yellow "0.VLESS+Vision+TCP"
+    echoContent yellow "1.VLESS+TLS+WS[仅CDN推荐]"
     echoContent yellow "3.VMess+TLS+WS[仅CDN推荐]"
     echoContent yellow "4.Trojan+TLS[不推荐]"
     echoContent yellow "6.Hysteria2"
@@ -7326,7 +7426,7 @@ customSingBoxInstall() {
         totalProgress=9
         installTools 1
         # 申请tls
-        if echo "${selectCustomInstallType}" | grep -q -E ",0,|,3,|,4,|,6,|,9,|,10,"; then
+        if echo "${selectCustomInstallType}" | grep -q -E ",0,|,1,|,3,|,4,|,6,|,9,|,10,"; then
             initTLSNginxConfig 2
             installTLS 3
             handleNginx stop
@@ -8652,6 +8752,7 @@ manageHysteria() {
         echoContent yellow "依赖第三方sing-box\n"
         echoContent yellow "1.重新安装"
         echoContent yellow "2.卸载"
+        echoContent yellow "3.端口跳跃管理"
         hysteria2Status=true
     else
         echoContent yellow "依赖sing-box内核\n"
@@ -8664,6 +8765,8 @@ manageHysteria() {
         singBoxHysteria2Install
     elif [[ "${installHysteria2Status}" == "2" && "${hysteria2Status}" == "true" ]]; then
         unInstallSingBox hysteria2
+    elif [[ "${installHysteria2Status}" == "3" && "${hysteria2Status}" == "true" ]]; then
+        hysteriaPortHoppingMenu
     fi
 }
 
@@ -8791,7 +8894,7 @@ menu() {
     cd "$HOME" || exit
     echoContent red "\n=============================================================="
     echoContent green "作者：mack-a"
-    echoContent green "当前版本：v3.2.36"
+    echoContent green "当前版本：v3.2.40"
     echoContent green "Github：https://github.com/mack-a/v2ray-agent"
     echoContent green "描述：八合一共存脚本\c"
     showInstallStatus
